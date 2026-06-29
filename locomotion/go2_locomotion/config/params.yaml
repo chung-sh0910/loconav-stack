@@ -1,0 +1,29 @@
+/**:
+  ros__parameters:
+    # Network interface connected to Go2 (check with: ip link show)
+    network_interface: "eth0"
+
+    # Active control mode at startup: "sdk_velocity" | "nn_policy"
+    control_mode: "sdk_velocity"
+
+    # Control loop frequency (Hz)
+    control_frequency: 50.0
+
+    # Watchdog: stop robot if no /cmd_ctr received within this window (seconds)
+    watchdog_timeout: 0.5
+
+    nn_policy:
+      # Path to trained ONNX policy file — leave empty until model is ready
+      model_path: ""
+
+      # Observation vector dimension (Isaac Lab Go2 default: 42)
+      obs_dim: 45
+
+      # Scale factor applied to raw network output before adding to default joint pose
+      action_scale: 0.25
+
+      # Joint stiffness gains (12 values: FR_hip, FR_thigh, FR_calf, FL_..., RR_..., RL_...)
+      kp: [60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0]
+
+      # Joint damping gains
+      kd: [5.0, 4.0, 4.0, 5.0, 4.0, 4.0, 5.0, 4.0, 4.0, 5.0, 4.0, 4.0]
