@@ -26,6 +26,20 @@ KD_DEFAULT = [5.0,  4.0,  4.0,  5.0,  4.0,  4.0,  5.0,  4.0,  4.0,  5.0,  4.0,  
 KP_PASSIVE = [0.0] * 12
 KD_PASSIVE = [3.0] * 12
 
+# Emergency-stop 내려앉기 게인 — 서있는 게인(60/80)보다 낮춰 compliant하게
+# (덜 뻣뻣하게 엎드림). damp 직전 보간 구간에서만 사용.
+KP_ESTOP_DESCENT = [40.0] * 12
+KD_ESTOP_DESCENT = [4.0] * 12
+
+# Prone / lie-down pose (SDK order) — Unitree go2 low-level example _targetPos_3.
+# Emergency stop이 damp 전에 이 자세로 천천히 내려앉힌다 (다리 완전히 접음).
+PRONE_JOINT_POS = np.array([
+    -0.35, 1.36, -2.65,   # FR
+     0.35, 1.36, -2.65,   # FL
+    -0.50, 1.36, -2.65,   # RR
+     0.50, 1.36, -2.65,   # RL
+], dtype=np.float32)
+
 # Joint index mapping: policy order (Isaac Lab) → SDK motor index
 # deploy.yaml: joint_ids_map: [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]
 # policy[i] commands SDK joint JOINT_IDS_MAP[i]

@@ -5,6 +5,7 @@ import numpy as np
 from .base_controller import BaseController
 from go2_locomotion.utils.go2_constants import (
     NUM_JOINTS, DEFAULT_JOINT_POS, KP_DEFAULT, KD_DEFAULT, KD_PASSIVE,
+    KP_ESTOP_DESCENT, KD_ESTOP_DESCENT, PRONE_JOINT_POS,
     MAX_VX, MIN_VX, MAX_VY, MAX_VYAW,
     TOPIC_LOW_STATE, TOPIC_LOW_CMD,
     POS_STOP_F, VEL_STOP_F, LOWLEVEL,
@@ -214,8 +215,11 @@ class NNPolicyController(BaseController):
         obs[33:45] = self._prev_actions
         return obs
 
-    def _send_low_cmd(self, target_q: np.ndarray) -> None:
+    def _send_low_cmd(self, target_q: np.ndarray, kp=None, kd=None) -> None:
         from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_
+
+        kp = self._kp if kp is None else kp
+        kd = self._kd if kd is None else kd
 
         msg = unitree_go_msg_dds__LowCmd_()
         msg.head[0] = 0xFE
@@ -234,8 +238,8 @@ class NNPolicyController(BaseController):
         for i in range(NUM_JOINTS):
             msg.motor_cmd[i].q   = float(target_q[i])
             msg.motor_cmd[i].dq  = 0.0
-            msg.motor_cmd[i].kp  = float(self._kp[i])
-            msg.motor_cmd[i].kd  = float(self._kd[i])
+            msg.motor_cmd[i].kp  = float(kp[i])
+            msg.motor_cmd[i].kd  = float(kd[i])
             msg.motor_cmd[i].tau = 0.0
 
         msg.crc = self._crc.Crc(msg)
@@ -246,8 +250,53 @@ class NNPolicyController(BaseController):
             self._send_low_cmd(self._default_pos)
 
     def emergency_stop(self) -> None:
+        """
+        안전 정지(low-level): sport 모드로 넘어가지 않고 현재 채널에서 처리한다.
+        현재 자세 → 엎드린 자세(prone)로 LowCmd를 보간 publish해 천천히 내려앉힌 뒤,
+        low-level damp(kp=0, kd=passive)로 힘을 뺀다.
+
+        sport takeover에 의존하지 않아 즉시·결정론적 — 비상정지에 적합하다.
+        sdk_velocity 모드는 sport가 항상 켜져 있어 StandDown()을 쓰지만,
+        nn_policy는 ReleaseMode 상태라 모드 전환 의존을 피하려 low-level로 처리한다.
+
+        cb_realtime 스레드에서 단발로 호출되며(step()과 인터리브 안 됨) 블로킹으로 수행한다.
+        """
         if self._cmd_pub is None:
             return
+
+        DT = 0.02            # 50 Hz publish 주기
+        DESCENT_S = 1.5      # 내려앉는 데 걸리는 시간
+        SETTLE_S = 0.3       # 엎드린 자세 정착 유지 시간
+
+        # 1) 현재 관절각 읽기 (SDK 순서). 상태 없으면 보간 생략하고 바로 damp.
+        with self._state_lock:
+            lowstate = self._lowstate
+        if lowstate is not None:
+            start_q = np.array(
+                [lowstate.motor_state[i].q for i in range(NUM_JOINTS)],
+                dtype=np.float32,
+            )
+
+            # 2) 현재 → prone 선형 보간 (compliant 게인으로 부드럽게)
+            steps = max(1, int(DESCENT_S / DT))
+            for k in range(1, steps + 1):
+                alpha = k / steps
+                q = (1.0 - alpha) * start_q + alpha * PRONE_JOINT_POS
+                self._send_low_cmd(q, kp=KP_ESTOP_DESCENT, kd=KD_ESTOP_DESCENT)
+                time.sleep(DT)
+
+            # 3) 엎드린 자세 잠깐 유지 (정착)
+            for _ in range(max(1, int(SETTLE_S / DT))):
+                self._send_low_cmd(
+                    PRONE_JOINT_POS, kp=KP_ESTOP_DESCENT, kd=KD_ESTOP_DESCENT
+                )
+                time.sleep(DT)
+
+        # 4) damp 전환 — 토크 차단, 바닥에 닿은 상태에서 힘 빠짐
+        self._send_damp()
+
+    def _send_damp(self) -> None:
+        """모든 모터를 damp 모드(kp=0, 약한 kd)로 전환 — 수동 상태."""
         from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_
 
         msg = unitree_go_msg_dds__LowCmd_()

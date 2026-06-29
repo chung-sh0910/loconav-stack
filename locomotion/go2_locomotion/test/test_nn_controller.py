@@ -12,7 +12,8 @@ from go2_locomotion.controllers.nn_policy_controller import NNPolicyController
 from go2_locomotion.utils.go2_constants import (
     DEFAULT_JOINT_POS, NUM_JOINTS,
     MAX_VX, MIN_VX, MAX_VY, MAX_VYAW,
-    KD_PASSIVE,
+    KD_PASSIVE, PRONE_JOINT_POS,
+    KP_ESTOP_DESCENT, KD_ESTOP_DESCENT,
 )
 
 
@@ -271,20 +272,46 @@ class TestStopAndEmergency:
     def test_emergency_stop_no_error_when_pub_none(self):
         ctrl = make_ctrl()
         ctrl._cmd_pub = None
-        ctrl.emergency_stop()
+        ctrl.emergency_stop()   # 예외 없어야 함
 
-    def test_emergency_stop_sends_passive_gains(self):
-        """emergency_stop은 kp=0, kd=KD_PASSIVE 모드를 보내야 한다."""
+    def test_emergency_stop_descends_then_damps(self):
+        """emergency_stop은 prone으로 보간 내려앉은 뒤 마지막에 damp를 호출해야 한다."""
+        ctrl = make_ctrl()
+        ctrl._cmd_pub = MagicMock()
+        ctrl._lowstate = make_fake_lowstate(joint_q=list(DEFAULT_JOINT_POS))
+
+        targets, gains = [], []
+        def capture(q, kp=None, kd=None):
+            targets.append(q.copy())
+            gains.append((kp, kd))
+
+        with patch.object(ctrl, '_send_low_cmd', side_effect=capture), \
+             patch.object(ctrl, '_send_damp') as mock_damp, \
+             patch('go2_locomotion.controllers.nn_policy_controller.time.sleep'):
+            ctrl.emergency_stop()
+
+        # 보간 + 정착으로 여러 프레임이 나가야 한다
+        assert len(targets) > 1
+        # 마지막 보간 목표는 완전히 prone 자세
+        np.testing.assert_allclose(targets[-1], PRONE_JOINT_POS, atol=1e-5)
+        # 첫 프레임은 아직 prone이 아님 (시작 자세에서 출발)
+        assert not np.allclose(targets[0], PRONE_JOINT_POS, atol=1e-2)
+        # 보간 구간은 compliant 게인을 써야 한다 (서있는 게인보다 낮음)
+        assert gains[0] == (KP_ESTOP_DESCENT, KD_ESTOP_DESCENT)
+        # 마지막에 damp로 힘을 빼야 한다
+        mock_damp.assert_called_once()
+
+    def test_send_damp_uses_passive_gains(self):
+        """_send_damp는 kp=0, kd=KD_PASSIVE, mode=0x00을 보내야 한다."""
         ctrl = make_ctrl()
         ctrl._cmd_pub = MagicMock()
 
-        sent_msgs = []
-        ctrl._cmd_pub.Write.side_effect = lambda m: sent_msgs.append(m)
+        sent = []
+        ctrl._cmd_pub.Write.side_effect = lambda m: sent.append(m)
+        ctrl._send_damp()
 
-        ctrl.emergency_stop()
-
-        assert len(sent_msgs) == 1
-        msg = sent_msgs[0]
+        assert len(sent) == 1
+        msg = sent[0]
         for i in range(NUM_JOINTS):
             assert msg.motor_cmd[i].mode == 0x00, f"joint {i}: mode should be 0x00 (Damp)"
             assert msg.motor_cmd[i].kp == 0.0,   f"joint {i}: kp should be 0"

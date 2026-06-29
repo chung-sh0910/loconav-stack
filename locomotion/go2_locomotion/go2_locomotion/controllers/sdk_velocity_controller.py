@@ -1,5 +1,5 @@
 import threading
-
+import time
 from .base_controller import BaseController
 from go2_locomotion.utils.go2_constants import MAX_VX, MIN_VX, MAX_VY, MAX_VYAW
 
@@ -45,9 +45,12 @@ class SDKVelocityController(BaseController):
             self._client.StopMove()
 
     def emergency_stop(self) -> None:
-        # Damp(): kp=0, kd 유지 — 모터 힘 빠지고 중력에 접힘 (sport 컨트롤러 내장 Passive)
+        # sport 모드가 항상 켜져 있어 네이티브 명령으로 바로 처리.
+        # StandDown(): 네 다리 모두 접어 천천히 엎드림 → Damp(): 힘 빼기(수동)
         if self._client is not None:
-            self._client.Damp()
+            self._client.StandDown()    # 네 발 다 접고 엎드림 — 천천히 내려앉음
+            time.sleep(2.0)             # 엎드리기 완료 대기
+            self._client.Damp()         # kp=0, 모터 힘 빠짐
 
     def recover(self) -> None:
         # sport mode는 RecoveryStand()로 바로 일어설 수 있음
