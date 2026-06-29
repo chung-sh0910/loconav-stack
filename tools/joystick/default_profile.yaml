@@ -11,13 +11,13 @@ nav:
   speed_th_up_max: 3.48
   speed_th_down_max: 5.23
 remote:
-  vx_max: 0.7
-  vx_min: -0.4
-  vy_max: 0.4
-  vth_max: 1.5
-  speed_x_up_max: 1.5
-  speed_x_down_max: 1.4
-  speed_y_up_max: 1.5
-  speed_y_down_max: 1.4
-  speed_th_up_max: 3.48
-  speed_th_down_max: 5.23
+  vx_max: 0.4
+  vx_min: -0.2
+  vy_max: 0.2
+  vth_max: 1.0
+  speed_x_up_max: 0.2
+  speed_x_down_max: 0.2
+  speed_y_up_max: 0.2
+  speed_y_down_max: 0.2
+  speed_th_up_max: 2.0
+  speed_th_down_max: 2.0
