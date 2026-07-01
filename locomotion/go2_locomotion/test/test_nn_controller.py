@@ -352,3 +352,49 @@ class TestStopAndEmergency:
             assert msg.motor_cmd[i].mode == 0x00, f"joint {i}: mode should be 0x00 (Damp)"
             assert msg.motor_cmd[i].kp == 0.0,   f"joint {i}: kp should be 0"
             assert msg.motor_cmd[i].kd == KD_PASSIVE[i % NUM_JOINTS], f"joint {i}: kd mismatch"
+
+
+# ---------------------------------------------------------------------------
+# 실기체 rollout logging
+# ---------------------------------------------------------------------------
+
+class TestRolloutLogging:
+
+    def test_logging_records_and_flushes(self, tmp_path):
+        import os
+        from go2_locomotion.utils import rollout_log as rl
+        from go2_locomotion.utils.go2_constants import JOINT_IDS_MAP
+
+        base = str(tmp_path / "real_log")
+        raw = np.arange(NUM_JOINTS, dtype=np.float32)   # policy order 0..11
+        policy = MagicMock(return_value=raw)
+        ctrl = make_ctrl(policy=policy, action_scale=0.25)
+        ctrl._log_path = base            # enable logging directly
+        ctrl._start_logging()
+        # deterministic lowstate: q=i, dq=10+i in SDK slots via helper params;
+        # tau_est isn't set by make_fake_lowstate, so set it via subscript (stable per-slot mock)
+        ls = make_fake_lowstate(
+            joint_q=[float(i) for i in range(NUM_JOINTS)],
+            joint_dq=[float(10 + i) for i in range(NUM_JOINTS)],
+        )
+        for i in range(NUM_JOINTS):
+            ls.motor_state[i].tau_est = float(20 + i)
+        ctrl._lowstate = ls
+
+        with patch.object(ctrl, '_send_low_cmd'):
+            ctrl.step()
+        ctrl.stop()
+
+        assert os.path.exists(base + ".csv") and os.path.exists(base + ".json")
+        meta, cols = rl.read_log(base)
+        assert meta["measured_order"] == "sdk"
+        assert meta["raw_action_order"] == "policy"
+        assert len(cols["step"]) == 1
+        # raw_action logged in policy order (unremapped)
+        np.testing.assert_allclose(cols["raw_action_5"], [5.0])
+        # q logged in SDK order straight from motor_state slots
+        np.testing.assert_allclose(cols["q_7"], [7.0])
+        np.testing.assert_allclose(cols["tau_7"], [27.0])
+        # initial state captured on first step
+        assert meta["initial_q"][7] == 7.0
+        assert meta["initial_base_quat"][0] == 1.0

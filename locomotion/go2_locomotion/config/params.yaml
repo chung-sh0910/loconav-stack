@@ -40,3 +40,7 @@
       # the gait needs, so the robot can twitch but cannot walk.
       policy_kp: [25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0]
       policy_kd: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+
+      # Sim2real rollout log output base path (no extension). Empty = logging off.
+      # When set, writes <log_path>.csv/.json on stop() with the real rollout.
+      log_path: ""

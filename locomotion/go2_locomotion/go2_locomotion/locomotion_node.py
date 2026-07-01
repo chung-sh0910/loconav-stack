@@ -48,6 +48,7 @@ class LocomotionNode(Node):
         # RL 보행 게인 — 학습값(25/0.5), step()에서만 사용
         self.declare_parameter('nn_policy.policy_kp', [25.0] * 12)
         self.declare_parameter('nn_policy.policy_kd', [0.5] * 12)
+        self.declare_parameter('nn_policy.log_path', '')
 
         network_interface = self.get_parameter('network_interface').value
         freq              = self.get_parameter('control_frequency').value
@@ -134,6 +135,7 @@ class LocomotionNode(Node):
         kd           = self.get_parameter('nn_policy.kd').value
         policy_kp    = self.get_parameter('nn_policy.policy_kp').value
         policy_kd    = self.get_parameter('nn_policy.policy_kd').value
+        log_path     = self.get_parameter('nn_policy.log_path').value
 
         policy = None
         if model_path:
@@ -156,6 +158,7 @@ class LocomotionNode(Node):
             kd=list(kd),
             policy_kp=list(policy_kp),
             policy_kd=list(policy_kd),
+            log_path=log_path,
         )
 
     # ------------------------------------------------------------------

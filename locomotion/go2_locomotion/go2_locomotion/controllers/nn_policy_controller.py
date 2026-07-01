@@ -10,9 +10,10 @@ from go2_locomotion.utils.go2_constants import (
     MAX_VX, MIN_VX, MAX_VY, MAX_VYAW,
     TOPIC_LOW_STATE, TOPIC_LOW_CMD,
     POS_STOP_F, VEL_STOP_F, LOWLEVEL,
-    JOINT_IDS_MAP,
+    JOINT_IDS_MAP, JOINT_NAMES,
 )
 from go2_locomotion.utils.imu_utils import quat_to_projected_gravity
+from go2_locomotion.utils.rollout_log import RolloutLogger, make_row
  
 # scp -P 55205 -r root@175.121.93.64:/root/unitree_rl_lab/logs/rsl_rl/unitree_go2_velocity/ ~/go2_logs2/
 
@@ -44,6 +45,7 @@ class NNPolicyController(BaseController):
         kd: list = None,
         policy_kp: list = None,
         policy_kd: list = None,
+        log_path: str = None,
     ):
         self._policy = policy
         self._obs_dim = obs_dim
@@ -61,6 +63,11 @@ class NNPolicyController(BaseController):
         # FixStand 게인으로 걷게 하면 과다 damping이 다리 스윙을 막아 보행이 안 된다.
         self._policy_kp = policy_kp if policy_kp is not None else KP_POLICY
         self._policy_kd = policy_kd if policy_kd is not None else KD_POLICY
+
+        self._log_path = log_path if log_path else None
+        self._logger = None
+        self._log_step = 0
+        self._log_t0 = None
 
         self._cmd_lock = threading.Lock()
         self._vx = 0.0
@@ -90,6 +97,7 @@ class NNPolicyController(BaseController):
         self._release_sport_mode()
         self._hold_current_pos()
         self._reset_policy()
+        self._start_logging()
 
     def recover(self) -> None:
         """
@@ -192,6 +200,24 @@ class NNPolicyController(BaseController):
         if self._policy is not None:
             self._policy.reset()
 
+    def _start_logging(self) -> None:
+        if not self._log_path:
+            return
+        metadata = {
+            "source": "real",
+            "dt": 0.02,
+            "raw_action_order": "policy",
+            "measured_order": "sdk",
+            "joint_sdk_names": list(JOINT_NAMES),
+            "action_scale": self._action_scale,
+            "action_clip": self._action_clip,
+            "policy_kp": list(self._policy_kp),
+            "policy_kd": list(self._policy_kd),
+        }
+        self._logger = RolloutLogger(self._log_path, metadata)
+        self._log_step = 0
+        self._log_t0 = time.time()
+
     # ------------------------------------------------------------------
 
     def _on_low_state(self, msg) -> None:
@@ -224,6 +250,24 @@ class NNPolicyController(BaseController):
         target_q[self._joint_ids_map] = self._default_pos[self._joint_ids_map] + action
         # RL 보행 게인(25/0.5)으로 전송 — 일어서기 게인(60~80/4~5)이 아님
         self._send_low_cmd(target_q, kp=self._policy_kp, kd=self._policy_kd)
+
+        if self._logger is not None:
+            q   = np.array([lowstate.motor_state[i].q for i in range(NUM_JOINTS)], dtype=np.float32)
+            dq  = np.array([lowstate.motor_state[i].dq for i in range(NUM_JOINTS)], dtype=np.float32)
+            tau = np.array([lowstate.motor_state[i].tau_est for i in range(NUM_JOINTS)], dtype=np.float32)
+            with self._cmd_lock:
+                cmd = (self._vx, self._vy, self._vyaw)
+            quat = tuple(lowstate.imu_state.quaternion[j] for j in range(4))
+            gyro = tuple(lowstate.imu_state.gyroscope[j] for j in range(3))
+            if self._log_step == 0:
+                self._logger.set_meta("initial_q", q.tolist())
+                self._logger.set_meta("initial_base_quat", list(quat))
+            self._logger.append(make_row(
+                step=self._log_step, t=time.time() - self._log_t0, cmd=cmd,
+                raw_action=raw_action, target_q=target_q, q=q, dq=dq, tau=tau,
+                quat=quat, gyro=gyro,
+            ))
+            self._log_step += 1
 
     def _build_observation(self, lowstate) -> np.ndarray:
         obs = np.zeros(self._obs_dim, dtype=np.float32)
@@ -289,6 +333,9 @@ class NNPolicyController(BaseController):
         self._cmd_pub.Write(msg)
 
     def stop(self) -> None:
+        if self._logger is not None:
+            self._logger.flush()
+            self._logger = None
         if self._cmd_pub is not None:
             self._send_low_cmd(self._default_pos)
 
