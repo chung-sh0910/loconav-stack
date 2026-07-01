@@ -218,7 +218,7 @@ class TestStep:
         ctrl._lowstate = make_fake_lowstate()
 
         captured = {}
-        def capture(target_q):
+        def capture(target_q, kp=None, kd=None):
             captured['q'] = target_q.copy()
 
         with patch.object(ctrl, '_send_low_cmd', side_effect=capture):
@@ -235,7 +235,7 @@ class TestStep:
         ctrl._lowstate = make_fake_lowstate()
 
         captured = {}
-        def capture(target_q):
+        def capture(target_q, kp=None, kd=None):
             captured['q'] = target_q.copy()
 
         with patch.object(ctrl, '_send_low_cmd', side_effect=capture):
@@ -252,7 +252,7 @@ class TestStep:
         ctrl._lowstate = make_fake_lowstate()
 
         captured = {}
-        def capture(target_q):
+        def capture(target_q, kp=None, kd=None):
             captured['q'] = target_q.copy()
 
         with patch.object(ctrl, '_send_low_cmd', side_effect=capture):
@@ -260,6 +260,25 @@ class TestStep:
 
         expected = DEFAULT_JOINT_POS + 6.0 * 0.25   # clip(10, -6, 6) = 6
         np.testing.assert_allclose(captured['q'], expected, atol=1e-6)
+
+    def test_step_uses_policy_gains_not_stand_gains(self):
+        """step()은 RL 보행 게인(25/0.5)을 보내야 한다 — 일어서기 게인(60~80/4~5)이 아님."""
+        from go2_locomotion.utils.go2_constants import KP_POLICY, KD_POLICY, KP_DEFAULT
+        policy = MagicMock(return_value=np.zeros(NUM_JOINTS, dtype=np.float32))
+        ctrl   = make_ctrl(policy=policy)
+        ctrl._lowstate = make_fake_lowstate()
+
+        captured = {}
+        def capture(target_q, kp=None, kd=None):
+            captured['kp'] = kp
+            captured['kd'] = kd
+
+        with patch.object(ctrl, '_send_low_cmd', side_effect=capture):
+            ctrl.step()
+
+        assert captured['kp'] == KP_POLICY, "step()이 정책 게인(25)을 안 씀"
+        assert captured['kd'] == KD_POLICY, "step()이 정책 damping(0.5)을 안 씀"
+        assert captured['kp'] != KP_DEFAULT, "step()이 일어서기 게인을 씀 — 잘못됨"
 
 
 # ---------------------------------------------------------------------------

@@ -40,10 +40,14 @@ class LocomotionNode(Node):
         self.declare_parameter('nn_policy.obs_dim',     45)
         self.declare_parameter('nn_policy.action_scale', 0.25)
         self.declare_parameter('nn_policy.action_clip',  6.0)
+        # 일어서기/hold(start·recover·stop) 게인 — FixStand 계열
         self.declare_parameter('nn_policy.kp', [60.0, 80.0, 80.0, 60.0, 80.0, 80.0,
                                                  60.0, 80.0, 80.0, 60.0, 80.0, 80.0])
         self.declare_parameter('nn_policy.kd', [5.0, 4.0, 4.0, 5.0, 4.0, 4.0,
                                                  5.0, 4.0, 4.0, 5.0, 4.0, 4.0])
+        # RL 보행 게인 — 학습값(25/0.5), step()에서만 사용
+        self.declare_parameter('nn_policy.policy_kp', [25.0] * 12)
+        self.declare_parameter('nn_policy.policy_kd', [0.5] * 12)
 
         network_interface = self.get_parameter('network_interface').value
         freq              = self.get_parameter('control_frequency').value
@@ -128,6 +132,8 @@ class LocomotionNode(Node):
         action_clip  = self.get_parameter('nn_policy.action_clip').value
         kp           = self.get_parameter('nn_policy.kp').value
         kd           = self.get_parameter('nn_policy.kd').value
+        policy_kp    = self.get_parameter('nn_policy.policy_kp').value
+        policy_kd    = self.get_parameter('nn_policy.policy_kd').value
 
         policy = None
         if model_path:
@@ -148,6 +154,8 @@ class LocomotionNode(Node):
             action_clip=action_clip,
             kp=list(kp),
             kd=list(kd),
+            policy_kp=list(policy_kp),
+            policy_kd=list(policy_kd),
         )
 
     # ------------------------------------------------------------------

@@ -5,6 +5,7 @@ import numpy as np
 from .base_controller import BaseController
 from go2_locomotion.utils.go2_constants import (
     NUM_JOINTS, DEFAULT_JOINT_POS, KP_DEFAULT, KD_DEFAULT, KD_PASSIVE,
+    KP_POLICY, KD_POLICY,
     KP_ESTOP_DESCENT, KD_ESTOP_DESCENT, PRONE_JOINT_POS,
     MAX_VX, MIN_VX, MAX_VY, MAX_VYAW,
     TOPIC_LOW_STATE, TOPIC_LOW_CMD,
@@ -41,6 +42,8 @@ class NNPolicyController(BaseController):
         action_clip: float = 6.0,
         kp: list = None,
         kd: list = None,
+        policy_kp: list = None,
+        policy_kd: list = None,
     ):
         self._policy = policy
         self._obs_dim = obs_dim
@@ -51,8 +54,13 @@ class NNPolicyController(BaseController):
         # 정상 gait는 안 잘리되(관측된 최대 ~5.7) 발산 시 관절 offset을 ±action_clip*scale
         # 로 제한하는 안전 경계로 사용한다.
         self._action_clip = action_clip
+        # 일어서기/hold(start·recover·stop) 게인 — FixStand 계열(뻣뻣하게 서있기)
         self._kp = kp if kp is not None else KP_DEFAULT
         self._kd = kd if kd is not None else KD_DEFAULT
+        # RL 보행 게인 — 학습값(25/0.5). step()에서만 사용.
+        # FixStand 게인으로 걷게 하면 과다 damping이 다리 스윙을 막아 보행이 안 된다.
+        self._policy_kp = policy_kp if policy_kp is not None else KP_POLICY
+        self._policy_kd = policy_kd if policy_kd is not None else KD_POLICY
 
         self._cmd_lock = threading.Lock()
         self._vx = 0.0
@@ -214,7 +222,8 @@ class NNPolicyController(BaseController):
         # policy 순서 action을 SDK 순서 target_q로 재배열
         target_q = self._default_pos.copy()
         target_q[self._joint_ids_map] = self._default_pos[self._joint_ids_map] + action
-        self._send_low_cmd(target_q)
+        # RL 보행 게인(25/0.5)으로 전송 — 일어서기 게인(60~80/4~5)이 아님
+        self._send_low_cmd(target_q, kp=self._policy_kp, kd=self._policy_kd)
 
     def _build_observation(self, lowstate) -> np.ndarray:
         obs = np.zeros(self._obs_dim, dtype=np.float32)

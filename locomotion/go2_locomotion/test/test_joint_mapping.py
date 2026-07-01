@@ -53,7 +53,7 @@ def test_step_routes_action_to_correct_sdk_joint():
         ctrl._lowstate = make_fake_lowstate()
 
         captured = {}
-        def capture(q, _i=sdk_i):
+        def capture(q, kp=None, kd=None, _i=sdk_i):
             captured['q'] = q.copy()
 
         with patch.object(ctrl, '_send_low_cmd', side_effect=capture):

@@ -19,8 +19,15 @@ DEFAULT_JOINT_POS = np.array([
 
 # PD gains — FixStand from unitree_rl_lab/deploy/robots/go2/config/config.yaml
 # (hip=60/5, thigh=80/4, calf=80/4 — thigh/calf stiffer than SDK example's uniform 60/5)
+# 일어서기/hold(start·recover·stop)에서만 사용. RL 보행 중에는 KP_POLICY/KD_POLICY 사용.
 KP_DEFAULT = [60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0]
 KD_DEFAULT = [5.0,  4.0,  4.0,  5.0,  4.0,  4.0,  5.0,  4.0,  4.0,  5.0,  4.0,  4.0]
+
+# RL 보행(Velocity) 게인 — 학습 actuator = 정책 export params/deploy.yaml = stiffness 25 / damping 0.5.
+# 공식 deploy(State_RLBase.h)가 RL 정책 구간에 joint_stiffness/joint_damping로 넣는 값과 동일.
+# FixStand의 60~80/4~5를 정책에 쓰면 과다 stiffness + 과다 damping으로 동적 보행이 안 나온다.
+KP_POLICY = [25.0] * 12
+KD_POLICY = [0.5] * 12
 
 # Passive (emergency stop) gains — Passive state in unitree_rl_lab config: kp=0, kd=3
 KP_PASSIVE = [0.0] * 12

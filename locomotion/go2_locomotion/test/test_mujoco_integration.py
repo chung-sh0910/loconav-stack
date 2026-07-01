@@ -169,7 +169,7 @@ def run_sim(sim: HeadlessSim, ctrl: NNPolicyController,
         captured_q = {}
         original_send = ctrl._send_low_cmd
 
-        def intercept(target_q, _cap=captured_q):
+        def intercept(target_q, kp=None, kd=None, _cap=captured_q):
             _cap['q'] = target_q.copy()
 
         with patch.object(ctrl, '_send_low_cmd', side_effect=intercept):
@@ -223,7 +223,7 @@ class TestStanding:
             if np.any(np.isnan(obs)):
                 nan_found = True
                 break
-            with patch.object(ctrl, '_send_low_cmd', side_effect=lambda q: sim.apply_cmd(q, KP_SIM, KD_SIM)):
+            with patch.object(ctrl, '_send_low_cmd', side_effect=lambda q, kp=None, kd=None: sim.apply_cmd(q, KP_SIM, KD_SIM)):
                 ctrl.step()
             sim.step(STEPS_PER_CTRL)
 

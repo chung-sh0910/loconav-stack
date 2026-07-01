@@ -27,8 +27,16 @@
       # while limiting a diverging policy to ±action_clip*action_scale rad of joint offset)
       action_clip: 6.0
 
-      # Joint stiffness gains (12 values: FR_hip, FR_thigh, FR_calf, FL_..., RR_..., RL_...)
+      # Stand-up / hold gains — used only for start·recover·stop (getting up, holding a
+      # fixed stance). These are the FixStand gains from unitree_rl_lab deploy config.
+      # (12 values: FR_hip, FR_thigh, FR_calf, FL_..., RR_..., RL_...)
       kp: [60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0]
-
-      # Joint damping gains
       kd: [5.0, 4.0, 4.0, 5.0, 4.0, 4.0, 5.0, 4.0, 4.0, 5.0, 4.0, 4.0]
+
+      # RL walking gains — used while the policy is actively controlling (step()).
+      # Must match training (env actuator stiffness=25, damping=0.5 = the policy's exported
+      # params/deploy.yaml). The official deploy (State_RLBase) applies these during walking.
+      # Do NOT use the stand-up gains here: the high damping blocks the leg-swing velocities
+      # the gait needs, so the robot can twitch but cannot walk.
+      policy_kp: [25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0]
+      policy_kd: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
