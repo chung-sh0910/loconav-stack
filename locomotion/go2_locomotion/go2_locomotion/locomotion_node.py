@@ -39,6 +39,7 @@ class LocomotionNode(Node):
         self.declare_parameter('nn_policy.model_path',  '/home/unitree/ros2_ws/src/loconav-stack/locomotion/go2_locomotion/tools/policy_first.onnx')
         self.declare_parameter('nn_policy.obs_dim',     45)
         self.declare_parameter('nn_policy.action_scale', 0.25)
+        self.declare_parameter('nn_policy.action_clip',  6.0)
         self.declare_parameter('nn_policy.kp', [60.0, 80.0, 80.0, 60.0, 80.0, 80.0,
                                                  60.0, 80.0, 80.0, 60.0, 80.0, 80.0])
         self.declare_parameter('nn_policy.kd', [5.0, 4.0, 4.0, 5.0, 4.0, 4.0,
@@ -124,6 +125,7 @@ class LocomotionNode(Node):
         model_path   = self.get_parameter('nn_policy.model_path').value
         obs_dim      = self.get_parameter('nn_policy.obs_dim').value
         action_scale = self.get_parameter('nn_policy.action_scale').value
+        action_clip  = self.get_parameter('nn_policy.action_clip').value
         kp           = self.get_parameter('nn_policy.kp').value
         kd           = self.get_parameter('nn_policy.kd').value
 
@@ -143,6 +145,7 @@ class LocomotionNode(Node):
             policy=policy,
             obs_dim=obs_dim,
             action_scale=action_scale,
+            action_clip=action_clip,
             kp=list(kp),
             kd=list(kd),
         )

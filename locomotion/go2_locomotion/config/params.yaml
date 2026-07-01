@@ -22,6 +22,11 @@
       # Scale factor applied to raw network output before adding to default joint pose
       action_scale: 0.25
 
+      # Safety bound on raw network output before scaling (training uses effectively no
+      # clip; the policy outputs |>1| even when standing, so ±6 keeps normal gait intact
+      # while limiting a diverging policy to ±action_clip*action_scale rad of joint offset)
+      action_clip: 6.0
+
       # Joint stiffness gains (12 values: FR_hip, FR_thigh, FR_calf, FL_..., RR_..., RL_...)
       kp: [60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0, 60.0, 80.0, 80.0]
 

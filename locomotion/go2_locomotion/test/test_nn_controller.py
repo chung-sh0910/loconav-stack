@@ -211,8 +211,8 @@ class TestStep:
             mock_send.assert_called_once()
 
     def test_step_action_scale_applied(self):
-        """target_q = DEFAULT_JOINT_POS + clip(raw, -1, 1) * action_scale."""
-        raw_action = np.ones(NUM_JOINTS, dtype=np.float32)   # clip 후 1.0
+        """target_q = DEFAULT_JOINT_POS + clip(raw, -action_clip, action_clip) * action_scale."""
+        raw_action = np.ones(NUM_JOINTS, dtype=np.float32)   # ±6 안이라 안 잘림
         policy = MagicMock(return_value=raw_action)
         ctrl   = make_ctrl(policy=policy, action_scale=0.25)
         ctrl._lowstate = make_fake_lowstate()
@@ -227,9 +227,9 @@ class TestStep:
         expected = DEFAULT_JOINT_POS + 1.0 * 0.25
         np.testing.assert_allclose(captured['q'], expected, atol=1e-6)
 
-    def test_step_clips_raw_action(self):
-        """raw action > 1 이면 clip 후 1.0 으로 제한."""
-        raw_action = np.full(NUM_JOINTS, 5.0, dtype=np.float32)
+    def test_step_normal_output_not_clipped(self):
+        """정상 gait 범위(|raw|<6)는 clip되지 않아 학습 fidelity 유지."""
+        raw_action = np.full(NUM_JOINTS, 5.0, dtype=np.float32)   # 기본 clip ±6 안
         policy = MagicMock(return_value=raw_action)
         ctrl   = make_ctrl(policy=policy, action_scale=0.25)
         ctrl._lowstate = make_fake_lowstate()
@@ -241,7 +241,24 @@ class TestStep:
         with patch.object(ctrl, '_send_low_cmd', side_effect=capture):
             ctrl.step()
 
-        expected = DEFAULT_JOINT_POS + 1.0 * 0.25   # clip(5, -1, 1) = 1
+        expected = DEFAULT_JOINT_POS + 5.0 * 0.25   # 안 잘림
+        np.testing.assert_allclose(captured['q'], expected, atol=1e-6)
+
+    def test_step_clips_diverging_action(self):
+        """발산성 출력(|raw|>action_clip)은 안전 경계 ±6 으로 제한."""
+        raw_action = np.full(NUM_JOINTS, 10.0, dtype=np.float32)
+        policy = MagicMock(return_value=raw_action)
+        ctrl   = make_ctrl(policy=policy, action_scale=0.25)
+        ctrl._lowstate = make_fake_lowstate()
+
+        captured = {}
+        def capture(target_q):
+            captured['q'] = target_q.copy()
+
+        with patch.object(ctrl, '_send_low_cmd', side_effect=capture):
+            ctrl.step()
+
+        expected = DEFAULT_JOINT_POS + 6.0 * 0.25   # clip(10, -6, 6) = 6
         np.testing.assert_allclose(captured['q'], expected, atol=1e-6)
 
 

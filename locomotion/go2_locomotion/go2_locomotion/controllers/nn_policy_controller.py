@@ -38,12 +38,19 @@ class NNPolicyController(BaseController):
         policy,
         obs_dim: int = 45,
         action_scale: float = 0.25,
+        action_clip: float = 6.0,
         kp: list = None,
         kd: list = None,
     ):
         self._policy = policy
         self._obs_dim = obs_dim
         self._action_scale = action_scale
+        # 학습(JointPositionActionCfg clip=(-100,100))은 사실상 clip이 없다.
+        # 정지 시에도 정책 raw 출력이 |1.2~1.4| 나오므로 [-1,1]로 자르면 gait가 학습과
+        # 어긋나고, last_action은 unclipped로 피드백되어 폐루프 불일치가 누적된다.
+        # 정상 gait는 안 잘리되(관측된 최대 ~5.7) 발산 시 관절 offset을 ±action_clip*scale
+        # 로 제한하는 안전 경계로 사용한다.
+        self._action_clip = action_clip
         self._kp = kp if kp is not None else KP_DEFAULT
         self._kd = kd if kd is not None else KD_DEFAULT
 
@@ -201,7 +208,7 @@ class NNPolicyController(BaseController):
         obs = self._build_observation(lowstate)
         raw_action = self._policy(obs)
 
-        action = np.clip(raw_action, -1.0, 1.0) * self._action_scale
+        action = np.clip(raw_action, -self._action_clip, self._action_clip) * self._action_scale
         self._prev_actions = raw_action.copy()
 
         # policy 순서 action을 SDK 순서 target_q로 재배열
