@@ -26,6 +26,20 @@ def align_lengths(real_cols, sim_cols):
     return int(min(len(real_cols["step"]), len(sim_cols["step"])))
 
 
+def validate_metadata(real_meta, sim_meta):
+    """Guard against comparing logs with mismatched joint order or schema version."""
+    r = real_meta.get("joint_sdk_names")
+    s = sim_meta.get("joint_sdk_names")
+    if r != s:
+        raise ValueError(
+            f"joint_sdk_names mismatch between real and sim logs — joints would be "
+            f"misaligned.\n  real: {r}\n  sim:  {s}"
+        )
+    if real_meta.get("version") != sim_meta.get("version"):
+        print(f"warning: schema version mismatch (real={real_meta.get('version')} "
+              f"sim={sim_meta.get('version')}) — columns may differ")
+
+
 def _signals():
     joints = [f"q_{i}" for i in range(12)] + [f"tau_{i}" for i in range(12)]
     return joints + ["base_roll", "base_pitch"]
@@ -72,8 +86,9 @@ def main():
     p.add_argument("--steady-start", type=int, default=20)
     args = p.parse_args()
 
-    _, real_cols = rl.read_log(args.real)
-    _, sim_cols = rl.read_log(args.sim)
+    real_meta, real_cols = rl.read_log(args.real)
+    sim_meta, sim_cols = rl.read_log(args.sim)
+    validate_metadata(real_meta, sim_meta)
     n = align_lengths(real_cols, sim_cols)
     if len(real_cols["step"]) != len(sim_cols["step"]):
         print(f"경고: 길이 불일치 real={len(real_cols['step'])} sim={len(sim_cols['step'])} → {n}로 truncate")

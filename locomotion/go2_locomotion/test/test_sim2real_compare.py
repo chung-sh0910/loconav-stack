@@ -46,3 +46,23 @@ def test_gap_table_offset_case():
     by_sig = {r["signal"]: r for r in rows}
     assert abs(by_sig["q_3"]["rmse_full"] - 0.1) < 1e-9
     assert abs(by_sig["q_0"]["rmse_full"]) < 1e-12
+
+
+def test_validate_metadata_ok():
+    m = {"joint_sdk_names": ["j%d" % i for i in range(12)], "version": 1}
+    s2r.validate_metadata(dict(m), dict(m))  # must not raise
+
+
+def test_validate_metadata_joint_mismatch_raises():
+    import pytest
+    a = {"joint_sdk_names": ["a"] * 12, "version": 1}
+    b = {"joint_sdk_names": ["b"] * 12, "version": 1}
+    with pytest.raises(ValueError):
+        s2r.validate_metadata(a, b)
+
+
+def test_validate_metadata_version_mismatch_warns(capsys):
+    m1 = {"joint_sdk_names": ["j"] * 12, "version": 1}
+    m2 = {"joint_sdk_names": ["j"] * 12, "version": 2}
+    s2r.validate_metadata(m1, m2)  # must not raise
+    assert "version" in capsys.readouterr().out.lower()
