@@ -251,7 +251,8 @@ class NNPolicyController(BaseController):
         # RL 보행 게인(25/0.5)으로 전송 — 일어서기 게인(60~80/4~5)이 아님
         self._send_low_cmd(target_q, kp=self._policy_kp, kd=self._policy_kd)
 
-        if self._logger is not None:
+        logger = self._logger
+        if logger is not None:
             q   = np.array([lowstate.motor_state[i].q for i in range(NUM_JOINTS)], dtype=np.float32)
             dq  = np.array([lowstate.motor_state[i].dq for i in range(NUM_JOINTS)], dtype=np.float32)
             tau = np.array([lowstate.motor_state[i].tau_est for i in range(NUM_JOINTS)], dtype=np.float32)
@@ -260,9 +261,9 @@ class NNPolicyController(BaseController):
             quat = tuple(lowstate.imu_state.quaternion[j] for j in range(4))
             gyro = tuple(lowstate.imu_state.gyroscope[j] for j in range(3))
             if self._log_step == 0:
-                self._logger.set_meta("initial_q", q.tolist())
-                self._logger.set_meta("initial_base_quat", list(quat))
-            self._logger.append(make_row(
+                logger.set_meta("initial_q", q.tolist())
+                logger.set_meta("initial_base_quat", list(quat))
+            logger.append(make_row(
                 step=self._log_step, t=time.time() - self._log_t0, cmd=cmd,
                 raw_action=raw_action, target_q=target_q, q=q, dq=dq, tau=tau,
                 quat=quat, gyro=gyro,
@@ -333,11 +334,12 @@ class NNPolicyController(BaseController):
         self._cmd_pub.Write(msg)
 
     def stop(self) -> None:
-        if self._logger is not None:
-            self._logger.flush()
-            self._logger = None
         if self._cmd_pub is not None:
             self._send_low_cmd(self._default_pos)
+        logger = self._logger
+        self._logger = None
+        if logger is not None:
+            logger.flush()
 
     def emergency_stop(self) -> None:
         """

@@ -363,7 +363,6 @@ class TestRolloutLogging:
     def test_logging_records_and_flushes(self, tmp_path):
         import os
         from go2_locomotion.utils import rollout_log as rl
-        from go2_locomotion.utils.go2_constants import JOINT_IDS_MAP
 
         base = str(tmp_path / "real_log")
         raw = np.arange(NUM_JOINTS, dtype=np.float32)   # policy order 0..11
@@ -395,6 +394,7 @@ class TestRolloutLogging:
         # q logged in SDK order straight from motor_state slots
         np.testing.assert_allclose(cols["q_7"], [7.0])
         np.testing.assert_allclose(cols["tau_7"], [27.0])
+        np.testing.assert_allclose(cols["dq_7"], [17.0])
         # initial state captured on first step
         assert meta["initial_q"][7] == 7.0
         assert meta["initial_base_quat"][0] == 1.0
