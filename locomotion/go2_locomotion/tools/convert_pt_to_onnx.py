@@ -2,6 +2,13 @@
 """
 RSL-RL ActorCritic .pt → ONNX 변환기 (MLP non-recurrent 전용).
 
+python3 convert_pt_to_onnx.py \
+        --checkpoint /home/unitree/ros2_ws/src/loconav-stack/locomotion/go2_locomotion/model/model_9300.pt \
+        --obs-dim 45 \
+        --action-dim 12 \
+        --hidden-dims 512 256 128 \
+        --output policy_first.onnx
+
 Usage:
     python3 tools/convert_pt_to_onnx.py \
         --checkpoint /path/to/model_9000.pt \
@@ -37,6 +44,39 @@ def load_actor_weights(actor: nn.Sequential, state_dict: dict) -> None:
     else:
         raise ValueError(f"알 수 없는 state_dict 형식. 키 목록: {list(state_dict.keys())[:10]}")
     actor.load_state_dict(actor_sd)
+
+
+def infer_rnn_arch(state_dict: dict) -> dict:
+    """memory_a.rnn.* 텐서 shape에서 rnn_type/hidden_size/num_layers/input_size를 추론."""
+    if "memory_a.rnn.weight_ih_l0" not in state_dict:
+        raise ValueError("state_dict에 memory_a.rnn.weight_ih_l0 키가 없음 (recurrent 체크포인트 아님)")
+
+    num_layers = 0
+    while f"memory_a.rnn.weight_ih_l{num_layers}" in state_dict:
+        num_layers += 1
+
+    weight_ih_l0 = state_dict["memory_a.rnn.weight_ih_l0"]
+    weight_hh_l0 = state_dict["memory_a.rnn.weight_hh_l0"]
+    hidden_size = weight_hh_l0.shape[1]
+    input_size = weight_ih_l0.shape[1]
+
+    gate_rows = weight_ih_l0.shape[0]
+    if gate_rows == 3 * hidden_size:
+        rnn_type = "gru"
+    elif gate_rows == 4 * hidden_size:
+        rnn_type = "lstm"
+    else:
+        raise ValueError(
+            f"알 수 없는 RNN 게이트 비율: weight_ih_l0.shape[0]={gate_rows}, hidden_size={hidden_size} "
+            f"(3x=GRU, 4x=LSTM 이어야 함)"
+        )
+
+    return {
+        "rnn_type": rnn_type,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "input_size": input_size,
+    }
 
 
 def convert(checkpoint_path: str, obs_dim: int, action_dim: int,
