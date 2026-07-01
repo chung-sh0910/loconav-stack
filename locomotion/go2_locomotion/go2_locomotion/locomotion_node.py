@@ -32,12 +32,12 @@ class LocomotionNode(Node):
     def __init__(self):
         super().__init__('locomotion_node')
 
-        self.declare_parameter('control_mode',          'sdk_velocity')
+        self.declare_parameter('control_mode',      "nn_policy")#'sdk_velocity')
         self.declare_parameter('network_interface',     'eth0')
         self.declare_parameter('control_frequency',     50.0)
         self.declare_parameter('watchdog_timeout',      0.5)
-        self.declare_parameter('nn_policy.model_path',  '')
-        self.declare_parameter('nn_policy.obs_dim',     42)
+        self.declare_parameter('nn_policy.model_path',  '/home/unitree/ros2_ws/src/loconav-stack/locomotion/go2_locomotion/tools/policy_first.onnx')
+        self.declare_parameter('nn_policy.obs_dim',     45)
         self.declare_parameter('nn_policy.action_scale', 0.25)
         self.declare_parameter('nn_policy.kp', [60.0, 80.0, 80.0, 60.0, 80.0, 80.0,
                                                  60.0, 80.0, 80.0, 60.0, 80.0, 80.0])
@@ -51,7 +51,7 @@ class LocomotionNode(Node):
 
         # ChannelFactory is a singleton — init once here, not inside each controller
         from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-        ChannelFactoryInitialize(0, network_interface)
+        ChannelFactoryInitialize(0, "eth0")#network_interface)
 
         self._controllers = {
             'sdk_velocity': self._build_sdk_controller(),
@@ -68,7 +68,6 @@ class LocomotionNode(Node):
 
         self._estop_active = False
         self._transition_active = False
-
         self._activate_controller(initial_mode)
 
         # Callback groups separate the fast real-time loop from slow,

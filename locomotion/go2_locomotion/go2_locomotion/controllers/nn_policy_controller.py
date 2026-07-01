@@ -12,7 +12,8 @@ from go2_locomotion.utils.go2_constants import (
     JOINT_IDS_MAP,
 )
 from go2_locomotion.utils.imu_utils import quat_to_projected_gravity
-
+ 
+# scp -P 55205 -r root@175.121.93.64:/root/unitree_rl_lab/logs/rsl_rl/unitree_go2_velocity/ ~/go2_logs2/
 
 class NNPolicyController(BaseController):
     """
@@ -77,23 +78,49 @@ class NNPolicyController(BaseController):
 
     def recover(self) -> None:
         """
-        비상정지 후 복구.
-        robot이 바닥에 있음 → RecoveryStand() → 서있는 상태에서 바로 ReleaseMode → hold
-        StandDown()을 다시 하지 않음 (서있다 앉았다 반복 방지)
+        비상정지 후 복구 — 전부 low-level로 처리 (sport mode 미사용).
+
+        SelectMode/RecoveryStand로 sport mode를 왕복하면:
+          - low-level damp 상태와 sport 제어가 모터를 두고 충돌 → 점프
+          - firmware에 따라 RecoveryStand 요청이 'send request error'로 실패
+        따라서 sport를 건드리지 않고, 현재(퍼진) 자세에서 DEFAULT 서있는 자세로
+        low-level position control로 부드럽게 보간해 일어선다.
+
+        핵심: 고정 자세를 풀게인으로 한 번에 때리지 않고
+          1) 현재 관절각에서 시작 (초기 위치 오차 0)
+          2) DEFAULT까지 STAND_S초에 걸쳐 선형 보간
+          3) kp를 낮게 시작해 점진적으로 올림 (초기 임펄스 제거)
         """
-        from unitree_sdk2py.go2.sport.sport_client import SportClient
-
-        sc = SportClient()
-        sc.SetTimeout(5.0)
-        sc.Init()
-
-        sc.RecoveryStand()
-        time.sleep(3.0)   # 일어서기 완료 대기
-
-        # 이미 서있으므로 StandDown 없이 바로 ReleaseMode
         self._init_dds()
-        self._release_sport_mode()
-        self._hold_current_pos()
+
+        # 현재(damp 후 퍼진) 관절각 읽기 — 여기서 출발해야 임펄스가 없다
+        with self._state_lock:
+            ls = self._lowstate
+        if ls is None:
+            # 상태 없으면 안전하게 중단 (블라인드로 서있기 명령 금지)
+            print("[recover] NO LOWSTATE — aborting recover")
+            return
+        start_q = np.array(
+            [ls.motor_state[i].q for i in range(NUM_JOINTS)], dtype=np.float32
+        )
+
+        DT = 0.02            # 50 Hz
+        STAND_S = 3.0        # 일어서는 데 걸리는 시간 (천천히)
+        steps = max(1, int(STAND_S / DT))
+        for k in range(1, steps + 1):
+            alpha = k / steps
+            q = (1.0 - alpha) * start_q + alpha * self._default_pos
+            # kp ramp: 0.3*full → 1.0*full (초기 급격한 토크 방지)
+            kp = [(0.3 + 0.7 * alpha) * g for g in self._kp]
+            self._send_low_cmd(q, kp=kp, kd=self._kd)
+            time.sleep(DT)
+
+        # 서있는 자세 잠깐 정착 유지 (full gain)
+        for _ in range(int(0.5 / DT)):
+            self._send_low_cmd(self._default_pos)
+            time.sleep(DT)
+
+        # policy 재개
         self._reset_policy()
 
     # ------------------------------------------------------------------
