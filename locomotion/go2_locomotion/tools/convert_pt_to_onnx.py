@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-RSL-RL ActorCritic .pt → ONNX 변환기 (MLP non-recurrent 전용).
+RSL-RL ActorCritic .pt → ONNX 변환기.
 
-python3 convert_pt_to_onnx.py \
-        --checkpoint /home/unitree/ros2_ws/src/loconav-stack/locomotion/go2_locomotion/model/model_9300.pt \
-        --obs-dim 45 \
-        --action-dim 12 \
-        --hidden-dims 512 256 128 \
-        --output policy_first.onnx
+MLP(non-recurrent)와 recurrent(GRU/LSTM, ActorCriticRecurrent) 체크포인트를 모두 지원.
+recurrent 체크포인트는 memory_a.rnn.* 키 존재 여부로 자동 감지되며, rnn_type/hidden_size/
+num_layers는 체크포인트 텐서 shape에서 자동으로 추론됨 (별도 플래그 불필요).
 
-Usage:
+recurrent 출력 ONNX I/O:
+  GRU  : inputs  obs, h_in     → outputs actions, h_out
+  LSTM : inputs  obs, h_in, c_in → outputs actions, h_out, c_out
+
+Usage (MLP와 recurrent 모두 동일한 커맨드 형태):
     python3 tools/convert_pt_to_onnx.py \
         --checkpoint /path/to/model_9000.pt \
         --obs-dim 45 \
@@ -105,6 +106,65 @@ def load_recurrent_weights(model: "RecurrentActor", state_dict: dict) -> None:
     load_actor_weights(model.actor, state_dict)
 
 
+def _convert_recurrent(raw_sd: dict, obs_dim: int, action_dim: int,
+                        hidden_dims, output_path: str) -> None:
+    arch = infer_rnn_arch(raw_sd)
+    if arch["input_size"] != obs_dim:
+        print(
+            f"경고: --obs-dim={obs_dim} 이지만 체크포인트의 memory_a.rnn 입력 크기는 "
+            f"{arch['input_size']} 입니다. 체크포인트 값을 사용합니다."
+        )
+    model = RecurrentActor(
+        rnn_type=arch["rnn_type"],
+        input_size=arch["input_size"],
+        hidden_size=arch["hidden_size"],
+        num_layers=arch["num_layers"],
+        action_dim=action_dim,
+        actor_hidden_dims=hidden_dims,
+    )
+    load_recurrent_weights(model, raw_sd)
+    model.eval()
+
+    dummy_obs = torch.zeros(1, arch["input_size"])
+    h_in = torch.zeros(arch["num_layers"], 1, arch["hidden_size"])
+
+    if arch["rnn_type"] == "lstm":
+        c_in = torch.zeros(arch["num_layers"], 1, arch["hidden_size"])
+        model.forward = model.forward_lstm
+        torch.onnx.export(
+            model, (dummy_obs, h_in, c_in), output_path,
+            export_params=True, opset_version=18,
+            input_names=["obs", "h_in", "c_in"],
+            output_names=["actions", "h_out", "c_out"],
+            dynamic_axes={}, verbose=False,
+        )
+    else:
+        model.forward = model.forward_gru
+        torch.onnx.export(
+            model, (dummy_obs, h_in), output_path,
+            export_params=True, opset_version=18,
+            input_names=["obs", "h_in"],
+            output_names=["actions", "h_out"],
+            dynamic_axes={}, verbose=False,
+        )
+    print(
+        f"저장 완료 (recurrent, {arch['rnn_type']}, hidden={arch['hidden_size']}, "
+        f"layers={arch['num_layers']}): {output_path}"
+    )
+
+    import onnxruntime as ort
+    import numpy as np
+    sess = ort.InferenceSession(output_path, providers=["CPUExecutionProvider"])
+    feed = {
+        "obs": np.zeros((1, arch["input_size"]), dtype=np.float32),
+        "h_in": np.zeros((arch["num_layers"], 1, arch["hidden_size"]), dtype=np.float32),
+    }
+    if arch["rnn_type"] == "lstm":
+        feed["c_in"] = np.zeros((arch["num_layers"], 1, arch["hidden_size"]), dtype=np.float32)
+    out = sess.run(None, feed)
+    print(f"추론 확인 — actions shape: {out[0].shape}, 샘플: {out[0][0, :4]}")
+
+
 def convert(checkpoint_path: str, obs_dim: int, action_dim: int,
             hidden_dims, output_path: str) -> None:
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -116,6 +176,11 @@ def convert(checkpoint_path: str, obs_dim: int, action_dim: int,
         raw_sd = ckpt["actor_state_dict"]
     else:
         raise ValueError(f"checkpoint에서 state dict를 찾을 수 없음. 키: {list(ckpt.keys())}")
+
+    is_recurrent = any(k.startswith("memory_a.rnn.") for k in raw_sd)
+    if is_recurrent:
+        _convert_recurrent(raw_sd, obs_dim, action_dim, hidden_dims, output_path)
+        return
 
     actor = build_actor(obs_dim, action_dim, hidden_dims)
     load_actor_weights(actor, raw_sd)

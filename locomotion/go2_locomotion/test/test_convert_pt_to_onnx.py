@@ -127,3 +127,74 @@ def test_load_recurrent_weights_matches_manual_rnn_step():
     ref_out, ref_h = ref_rnn(obs.unsqueeze(0), h_in)
     assert torch.allclose(h_out, ref_h, atol=1e-6)
     assert actions.shape == (1, 12)
+
+
+def test_convert_recurrent_checkpoint_exports_onnx_with_expected_io(tmp_path):
+    import onnxruntime as ort
+    import numpy as np
+
+    torch.manual_seed(1)
+    sd = _gru_state_dict(input_size=45, hidden_size=256, num_layers=1)
+    sd["actor.0.weight"] = torch.randn(512, 256)
+    sd["actor.0.bias"] = torch.randn(512)
+    sd["actor.2.weight"] = torch.randn(256, 512)
+    sd["actor.2.bias"] = torch.randn(256)
+    sd["actor.4.weight"] = torch.randn(128, 256)
+    sd["actor.4.bias"] = torch.randn(128)
+    sd["actor.6.weight"] = torch.randn(12, 128)
+    sd["actor.6.bias"] = torch.randn(12)
+    for k in list(sd.keys()):
+        if k.startswith("memory_a.rnn."):
+            sd[k] = torch.randn_like(sd[k])
+    # non-actor keys that must be ignored
+    sd["critic.0.weight"] = torch.randn(512, 256)
+    sd["vel_head.0.weight"] = torch.randn(256, 256)
+
+    ckpt_path = tmp_path / "model_recurrent.pt"
+    torch.save({"model_state_dict": sd}, ckpt_path)
+    onnx_path = tmp_path / "policy.onnx"
+
+    convert_pt_to_onnx.convert(
+        str(ckpt_path), obs_dim=45, action_dim=12, hidden_dims=[512, 256, 128],
+        output_path=str(onnx_path),
+    )
+
+    sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    input_names = {i.name for i in sess.get_inputs()}
+    output_names = {o.name for o in sess.get_outputs()}
+    assert input_names == {"obs", "h_in"}
+    assert output_names == {"actions", "h_out"}
+
+    out = sess.run(None, {
+        "obs": np.zeros((1, 45), dtype=np.float32),
+        "h_in": np.zeros((1, 1, 256), dtype=np.float32),
+    })
+    actions = out[0]
+    assert actions.shape == (1, 12)
+
+
+def test_convert_non_recurrent_checkpoint_still_works(tmp_path):
+    import onnxruntime as ort
+    import numpy as np
+
+    torch.manual_seed(2)
+    sd = {
+        "actor.0.weight": torch.randn(512, 45), "actor.0.bias": torch.randn(512),
+        "actor.2.weight": torch.randn(256, 512), "actor.2.bias": torch.randn(256),
+        "actor.4.weight": torch.randn(128, 256), "actor.4.bias": torch.randn(128),
+        "actor.6.weight": torch.randn(12, 128), "actor.6.bias": torch.randn(12),
+    }
+    ckpt_path = tmp_path / "model_mlp.pt"
+    torch.save({"model_state_dict": sd}, ckpt_path)
+    onnx_path = tmp_path / "policy_mlp.onnx"
+
+    convert_pt_to_onnx.convert(
+        str(ckpt_path), obs_dim=45, action_dim=12, hidden_dims=[512, 256, 128],
+        output_path=str(onnx_path),
+    )
+
+    sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    input_names = {i.name for i in sess.get_inputs()}
+    assert input_names == {"obs"}
+    out = sess.run(None, {"obs": np.zeros((1, 45), dtype=np.float32)})
+    assert out[0].shape == (1, 12)
