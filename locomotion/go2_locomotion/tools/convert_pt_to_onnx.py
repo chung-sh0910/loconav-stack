@@ -79,6 +79,32 @@ def infer_rnn_arch(state_dict: dict) -> dict:
     }
 
 
+class RecurrentActor(nn.Module):
+    """memory_a.rnn (GRU/LSTM) + actor MLP head. ONNX export용 단일 스텝 forward."""
+
+    def __init__(self, rnn_type: str, input_size: int, hidden_size: int, num_layers: int,
+                 action_dim: int, actor_hidden_dims) -> None:
+        super().__init__()
+        self.rnn_type = rnn_type
+        rnn_cls = nn.LSTM if rnn_type == "lstm" else nn.GRU
+        self.rnn = rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
+        self.actor = build_actor(hidden_size, action_dim, actor_hidden_dims)
+
+    def forward_gru(self, x, h_in):
+        out, h_out = self.rnn(x.unsqueeze(0), h_in)
+        return self.actor(out.squeeze(0)), h_out
+
+    def forward_lstm(self, x, h_in, c_in):
+        out, (h_out, c_out) = self.rnn(x.unsqueeze(0), (h_in, c_in))
+        return self.actor(out.squeeze(0)), h_out, c_out
+
+
+def load_recurrent_weights(model: "RecurrentActor", state_dict: dict) -> None:
+    rnn_sd = {k[len("memory_a.rnn."):]: v for k, v in state_dict.items() if k.startswith("memory_a.rnn.")}
+    model.rnn.load_state_dict(rnn_sd)
+    load_actor_weights(model.actor, state_dict)
+
+
 def convert(checkpoint_path: str, obs_dim: int, action_dim: int,
             hidden_dims, output_path: str) -> None:
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)

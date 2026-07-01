@@ -61,3 +61,69 @@ def test_infer_rnn_arch_bad_gate_ratio_raises():
     }
     with pytest.raises(ValueError):
         convert_pt_to_onnx.infer_rnn_arch(sd)
+
+
+def test_recurrent_actor_gru_forward_shapes():
+    model = convert_pt_to_onnx.RecurrentActor(
+        rnn_type="gru", input_size=45, hidden_size=256, num_layers=1,
+        action_dim=12, actor_hidden_dims=[512, 256, 128],
+    )
+    model.eval()
+    obs = torch.zeros(1, 45)
+    h_in = torch.zeros(1, 1, 256)
+    actions, h_out = model.forward_gru(obs, h_in)
+    assert actions.shape == (1, 12)
+    assert h_out.shape == (1, 1, 256)
+
+
+def test_recurrent_actor_lstm_forward_shapes():
+    model = convert_pt_to_onnx.RecurrentActor(
+        rnn_type="lstm", input_size=45, hidden_size=128, num_layers=2,
+        action_dim=12, actor_hidden_dims=[512, 256, 128],
+    )
+    model.eval()
+    obs = torch.zeros(1, 45)
+    h_in = torch.zeros(2, 1, 128)
+    c_in = torch.zeros(2, 1, 128)
+    actions, h_out, c_out = model.forward_lstm(obs, h_in, c_in)
+    assert actions.shape == (1, 12)
+    assert h_out.shape == (2, 1, 128)
+    assert c_out.shape == (2, 1, 128)
+
+
+def test_load_recurrent_weights_matches_manual_rnn_step():
+    torch.manual_seed(0)
+    sd = _gru_state_dict(input_size=45, hidden_size=256, num_layers=1)
+    # give actor head real weights too (matches build_actor([512,256,128]) for hidden_size=256 in, 12 out)
+    sd["actor.0.weight"] = torch.randn(512, 256)
+    sd["actor.0.bias"] = torch.randn(512)
+    sd["actor.2.weight"] = torch.randn(256, 512)
+    sd["actor.2.bias"] = torch.randn(256)
+    sd["actor.4.weight"] = torch.randn(128, 256)
+    sd["actor.4.bias"] = torch.randn(128)
+    sd["actor.6.weight"] = torch.randn(12, 128)
+    sd["actor.6.bias"] = torch.randn(12)
+    for k in list(sd.keys()):
+        if k.startswith("memory_a.rnn."):
+            sd[k] = torch.randn_like(sd[k])
+
+    model = convert_pt_to_onnx.RecurrentActor(
+        rnn_type="gru", input_size=45, hidden_size=256, num_layers=1,
+        action_dim=12, actor_hidden_dims=[512, 256, 128],
+    )
+    convert_pt_to_onnx.load_recurrent_weights(model, sd)
+    model.eval()
+
+    obs = torch.randn(1, 45)
+    h_in = torch.zeros(1, 1, 256)
+    actions, h_out = model.forward_gru(obs, h_in)
+
+    # reference: run torch.nn.GRU directly with the same weights
+    ref_rnn = torch.nn.GRU(input_size=45, hidden_size=256, num_layers=1)
+    ref_rnn.load_state_dict(
+        {k[len("memory_a.rnn."):]: v for k, v in sd.items() if k.startswith("memory_a.rnn.")}
+    )
+    ref_rnn.eval()
+    ref_out, ref_h = ref_rnn(obs.unsqueeze(0), h_in)
+    assert torch.allclose(h_out, ref_h, atol=1e-6)
+    assert actions.shape == (1, 12)
