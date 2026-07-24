@@ -123,6 +123,12 @@ class LocomotionNode(Node):
             self._watchdog_timeout / 5.0, self._watchdog_callback,
             callback_group=self._cb_realtime,
         )
+        # Log the MoE routing expert whenever it changes (10 Hz poll; min-dwell is 0.2s so no
+        # change is missed). Off the RT thread; silent for MLP / non-routing policies.
+        self._last_logged_expert = -2
+        self._expert_log_timer = self.create_timer(
+            0.1, self._log_expert, callback_group=self._cb_slow,
+        )
         self.add_on_set_parameters_callback(self._on_parameter_change)
 
         self.get_logger().info(
@@ -214,6 +220,18 @@ class LocomotionNode(Node):
             policy_kd=list(policy_kd),
             log_path=log_path,
         )
+
+    def _log_expert(self):
+        """Print the MoE routing expert on every change (silent for MLP / non-routing policies)."""
+        ctrl = self._active_controller
+        policy = getattr(ctrl, "_policy", None) if ctrl is not None else None
+        expert = getattr(policy, "current_expert", None) if policy is not None else None
+        if expert is None or expert < 0:      # MLP (-1) or no policy: nothing to report
+            self._last_logged_expert = -2     # so re-entry to a MoE policy logs the first expert again
+            return
+        if expert != self._last_logged_expert:
+            self.get_logger().info(f'[MoE] routing -> expert {expert}')
+            self._last_logged_expert = expert
 
     # ------------------------------------------------------------------
     # Mode switching

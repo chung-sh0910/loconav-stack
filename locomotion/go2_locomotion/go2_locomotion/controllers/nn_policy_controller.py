@@ -335,7 +335,8 @@ class NNPolicyController(BaseController):
 
     def stop(self) -> None:
         if self._cmd_pub is not None:
-            self._send_low_cmd(self._default_pos)
+            #self._send_low_cmd(self._default_pos)
+            pass
         logger = self._logger
         self._logger = None
         if logger is not None:

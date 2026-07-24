@@ -8,12 +8,12 @@
 set -e
 
 SESSION="go2_stack"
-SMLL_ROOT="/home/csh/smll_project"
+SMLL_ROOT="/home/unitree/ros2_ws/src/loconav-stack" #"/home/csh/smll_project"
 JOYSTICK_DIR="$SMLL_ROOT/tools/joystick"
 MOTION_DIR="$SMLL_ROOT/tools/motion_controller"
 LOCOMOTION_DIR="$SMLL_ROOT/locomotion/go2_locomotion/go2_locomotion"
 
-ROS_SETUP="source /opt/ros/foxy/setup.bash && source $SMLL_ROOT/install/setup.bash"
+ROS_SETUP="source /opt/ros/foxy/setup.bash" #&& source $SMLL_ROOT/install/setup.bash"
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "세션 '$SESSION' 이미 존재 — 붙습니다."
