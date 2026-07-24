@@ -49,6 +49,17 @@ class LocomotionNode(Node):
         self.declare_parameter('nn_policy.policy_kp', [25.0] * 12)
         self.declare_parameter('nn_policy.policy_kd', [0.5] * 12)
         self.declare_parameter('nn_policy.log_path', '')
+        # Policy backend. "auto" picks by the model file: *.onnx -> OnnxPolicy; *.pt -> the rsl_rl
+        # torch policy (MoE if the checkpoint has actor.moe.*, else the Hist-MLP). Set explicitly to
+        # "onnx"/"moe"/"mlp" to override. Torch backends need torch + rsl_rl on the robot compute.
+        self.declare_parameter('nn_policy.policy_type', 'auto')
+        self.declare_parameter('nn_policy.rsl_rl_path', '/home/unitree/ros2_ws/src/rsl_rl')
+        # MoE only: pin every step to one expert (>=0), or -1 for normal gate routing. Lets you drive
+        # a single terrain expert on the real robot to see its gait in isolation (like the demo).
+        self.declare_parameter('nn_policy.force_expert', -1)
+        # MoE routing persistence at deployment (anti mode-chatter); applies to torch MoE and onnx_moe.
+        self.declare_parameter('nn_policy.route_hysteresis', 1.0)
+        self.declare_parameter('nn_policy.route_min_dwell', 10)
 
         network_interface = self.get_parameter('network_interface').value
         freq              = self.get_parameter('control_frequency').value
@@ -126,6 +137,50 @@ class LocomotionNode(Node):
     def _build_sdk_controller(self) -> SDKVelocityController:
         return SDKVelocityController()
 
+    def _build_policy(self, model_path: str):
+        """Select the policy backend by ``nn_policy.policy_type`` (or auto-detect from the file).
+
+        onnx     : OnnxPolicy -- legacy single-frame (45-d) MLP/recurrent export. No torch.
+        onnx_moe : OnnxMoEPolicy -- the MoE/Hist-MLP export from convert_moe_to_onnx.py (225-d
+                   history + numpy routing/persistence). No torch -- THIS is the Go2 runtime.
+        moe/mlp  : rsl_rl ActorCriticMoE / ActorCriticVel loaded via torch (dev/PC only).
+        auto     : *.onnx -> onnx_moe if it has an 'obs_history' input else onnx; *.pt -> moe if the
+                   checkpoint has actor.moe.* else mlp.
+        """
+        ptype = self.get_parameter('nn_policy.policy_type').value
+        rsl_rl_path = self.get_parameter('nn_policy.rsl_rl_path').value
+        force_expert = self.get_parameter('nn_policy.force_expert').value
+        hyst = self.get_parameter('nn_policy.route_hysteresis').value
+        dwell = self.get_parameter('nn_policy.route_min_dwell').value
+        force_kw = {'force_expert': force_expert} if force_expert is not None and force_expert >= 0 else {}
+
+        if ptype == 'auto':
+            if model_path.endswith('.onnx'):
+                import onnxruntime as ort  # our MoE/MLP exports carry an 'obs_history' input
+                names = [i.name for i in ort.InferenceSession(
+                    model_path, providers=['CPUExecutionProvider']).get_inputs()]
+                ptype = 'onnx_moe' if 'obs_history' in names else 'onnx'
+            else:
+                import torch  # only needed for the torch backends
+                sd = torch.load(model_path, map_location='cpu')
+                sd = sd.get('model_state_dict', sd) if isinstance(sd, dict) else sd
+                ptype = 'moe' if any(k.startswith('actor.moe.') for k in sd) else 'mlp'
+            self.get_logger().info(f'nn_policy backend auto-detected: {ptype}')
+
+        if ptype == 'onnx':
+            from go2_locomotion.policy.onnx_policy import OnnxPolicy
+            return OnnxPolicy(model_path)
+        if ptype == 'onnx_moe':
+            from go2_locomotion.policy.onnx_moe_policy import OnnxMoEPolicy
+            return OnnxMoEPolicy(model_path, route_hysteresis=hyst, route_min_dwell=dwell, **force_kw)
+        if ptype == 'mlp':
+            from go2_locomotion.policy.mlp_policy import MlpPolicy
+            return MlpPolicy(model_path, rsl_rl_path=rsl_rl_path)
+        if ptype == 'moe':
+            from go2_locomotion.policy.moe_policy import MoEPolicy
+            return MoEPolicy(model_path, rsl_rl_path=rsl_rl_path, **force_kw)
+        raise ValueError(f"unknown nn_policy.policy_type {ptype!r} (auto/onnx/onnx_moe/moe/mlp)")
+
     def _build_nn_controller(self) -> NNPolicyController:
         model_path   = self.get_parameter('nn_policy.model_path').value
         obs_dim      = self.get_parameter('nn_policy.obs_dim').value
@@ -140,8 +195,7 @@ class LocomotionNode(Node):
         policy = None
         if model_path:
             try:
-                from go2_locomotion.policy.onnx_policy import OnnxPolicy
-                policy = OnnxPolicy(model_path)
+                policy = self._build_policy(model_path)
                 self.get_logger().info(f'Loaded NN policy from {model_path}')
             except Exception as e:
                 self.get_logger().warning(
